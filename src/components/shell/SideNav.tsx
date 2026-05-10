@@ -25,6 +25,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { bootstrapDashboard } from "@/lib/orchestration";
+
 interface NavItem {
   label: string;
   href: string;
@@ -41,6 +43,10 @@ const PRIMARY_NAV: readonly NavItem[] = [
 
 export function SideNav() {
   const pathname = usePathname();
+
+  const handleOptimize = () => {
+    void bootstrapDashboard({ mode: "demo" });
+  };
 
   return (
     <aside
@@ -72,29 +78,47 @@ export function SideNav() {
         ))}
       </nav>
 
-      {/* Footer: CTA + utility links */}
+      {/* Footer: CTA + utility buttons (not navigable routes) */}
       <div className="mt-auto space-y-1 px-4 pt-6">
         <button
           type="button"
+          onClick={handleOptimize}
           className="
             mb-6 flex w-full cursor-pointer items-center justify-center gap-2
             rounded-lg bg-gradient-to-r from-primary to-secondary px-4 py-3
             font-mono text-xs font-semibold uppercase tracking-[0.08em]
             text-on-primary shadow-lg shadow-primary/20
-            transition-transform active:scale-95
+            transition-transform active:scale-95 hover:shadow-primary/30
           "
+          aria-label="Re-run optimization pipeline"
         >
           <Sparkles className="h-4 w-4" strokeWidth={2.25} />
           New Optimization
         </button>
 
-        <SideNavLink
-          item={{ label: "Help", href: "/help", icon: HelpCircle }}
-          active={false}
+        <SideNavUtilityButton
+          icon={HelpCircle}
+          label="Help"
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              window.open(
+                "https://github.com/izzimra/Rovr#readme",
+                "_blank",
+                "noopener,noreferrer",
+              );
+            }
+          }}
         />
-        <SideNavLink
-          item={{ label: "Logout", href: "/logout", icon: LogOut }}
-          active={false}
+        <SideNavUtilityButton
+          icon={LogOut}
+          label="Sign out"
+          onClick={() => {
+            // Supabase auth isn't wired into this demo; clear local session
+            // state and reload so the dashboard reseeds from scratch.
+            if (typeof window !== "undefined") {
+              window.location.reload();
+            }
+          }}
         />
       </div>
     </aside>
@@ -124,6 +148,35 @@ function SideNavLink({ item, active }: { item: NavItem; active: boolean }) {
       />
       <span>{item.label}</span>
     </Link>
+  );
+}
+
+function SideNavUtilityButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="
+        group flex w-full cursor-pointer items-center gap-3 rounded-lg px-4 py-3
+        font-mono text-xs uppercase tracking-[0.08em]
+        text-on-surface-variant transition-colors duration-200
+        hover:bg-surface-container-highest hover:text-on-surface
+      "
+    >
+      <Icon
+        className="h-[18px] w-[18px] transition-transform group-hover:translate-x-0.5"
+        strokeWidth={2}
+      />
+      <span>{label}</span>
+    </button>
   );
 }
 

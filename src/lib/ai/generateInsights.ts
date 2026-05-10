@@ -66,6 +66,8 @@ export async function generateInsightsWithTrace(
       trace,
     };
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[insights] gemini error:", err);
     trace.markFallback(classifyError(err));
     return {
       insights: buildDeterministicInsights(customers, route, kpis),

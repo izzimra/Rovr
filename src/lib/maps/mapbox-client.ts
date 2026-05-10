@@ -15,9 +15,16 @@
 
 export const MAPBOX_TOKEN_ENV = "NEXT_PUBLIC_MAPBOX_TOKEN";
 
-/** Read the public Mapbox token from the environment. Returns "" if unset. */
+/**
+ * Read the public Mapbox token from the environment. Returns "" if unset.
+ *
+ * IMPORTANT: Next.js only statically replaces `process.env.NEXT_PUBLIC_*`
+ * at build time when you use DIRECT property access. Computed access
+ * like `process.env[MAPBOX_TOKEN_ENV]` returns undefined in the browser.
+ * Hence the literal access below.
+ */
 export function getMapboxToken(): string {
-  const raw = process.env[MAPBOX_TOKEN_ENV];
+  const raw = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
   return typeof raw === "string" ? raw.trim() : "";
 }
 

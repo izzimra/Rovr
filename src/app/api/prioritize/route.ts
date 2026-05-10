@@ -47,7 +47,8 @@ export async function POST(req: NextRequest) {
   const trace = new CallTrace();
   const ranked = rankCustomers(body.customers);
   const hydrated = await explainCustomerPriorities(ranked, {
-    topN: body.topN ?? 10,
+    topN: body.topN ?? 3,
+    concurrency: 1,
     trace,
   });
 
