@@ -61,5 +61,5 @@ function deterministicExplanation(
     customer.last_visit_days >= 30
       ? `overdue (${customer.last_visit_days}d since visit)`
       : `visited ${customer.last_visit_days}d ago`;
-  return `${tier} tier, score ${score.toFixed(1)}. RM${customer.sales_value.toLocaleString()} pipeline, ${staleness}.`;
+  return `${tier} tier, score ${score.toFixed(1)}. RM${customer.sales_value.toLocaleString("en-US")} pipeline, ${staleness}.`;
 }

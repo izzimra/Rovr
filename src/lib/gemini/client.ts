@@ -4,7 +4,8 @@
  * Thin wrapper around @google/generative-ai that:
  *  - lazily initializes a singleton client (server-only)
  *  - centralizes generation config, timeouts, and retries
- *  - exposes typed helpers for text and JSON generation
+ *  - enables native JSON-mode with response schemas for structured calls
+ *  - exposes typed helpers for text and schema-constrained JSON generation
  *
  * Callers should prefer the higher-level functions in `./services.ts`
  * over using this client directly.
@@ -14,6 +15,7 @@ import {
   GoogleGenerativeAI,
   type GenerativeModel,
   type GenerationConfig,
+  type Schema,
 } from "@google/generative-ai";
 
 import {
@@ -23,7 +25,12 @@ import {
   getGeminiApiKey,
   type GeminiGenerationConfig,
 } from "./config";
-import { GeminiError, parseJsonResponse, withRetry } from "./helpers";
+import {
+  CallTrace,
+  GeminiError,
+  parseJsonResponse,
+  withRetry,
+} from "./helpers";
 
 let cachedClient: GoogleGenerativeAI | null = null;
 
@@ -43,6 +50,13 @@ export interface GenerateOptions {
   generationConfig?: Partial<GeminiGenerationConfig>;
   /** Override the default model (e.g. for a more capable tier). */
   model?: string;
+  /**
+   * Native response schema that constrains Gemini output at generation
+   * time. When set, the client also sets `responseMimeType` to JSON.
+   */
+  responseSchema?: Schema;
+  /** Optional trace for observability. Mutated by the client on attempts. */
+  trace?: CallTrace;
 }
 
 /** Resolve a `GenerativeModel` ready to call `generateContent` on. */
@@ -52,6 +66,10 @@ function resolveModel(opts: GenerateOptions = {}): GenerativeModel {
     ...DEFAULT_GENERATION_CONFIG,
     ...opts.generationConfig,
   };
+  if (opts.responseSchema) {
+    config.responseMimeType = "application/json";
+    config.responseSchema = opts.responseSchema;
+  }
   return client.getGenerativeModel({
     model: opts.model ?? GEMINI_MODEL,
     generationConfig: config,
@@ -65,7 +83,12 @@ async function withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
     p,
     new Promise<T>((_, reject) =>
       setTimeout(
-        () => reject(new GeminiError(`${label} timed out after ${REQUEST_TIMEOUT_MS}ms`)),
+        () =>
+          reject(
+            new GeminiError(`${label} timed out after ${REQUEST_TIMEOUT_MS}ms`, {
+              reason: "gemini_timeout",
+            }),
+          ),
         REQUEST_TIMEOUT_MS,
       ),
     ),
@@ -82,38 +105,50 @@ export async function generateText(
   opts: GenerateOptions = {},
 ): Promise<string> {
   const model = resolveModel(opts);
-  return withRetry(async () => {
-    const result = await withTimeout(model.generateContent(prompt), "generateText");
-    const text = result.response.text();
-    if (!text || text.trim() === "") {
-      throw new GeminiError("Gemini returned an empty response.");
-    }
-    return text;
-  }, "generateText");
+  return withRetry(
+    async () => {
+      const result = await withTimeout(
+        model.generateContent(prompt),
+        "generateText",
+      );
+      const text = result.response.text();
+      if (!text || text.trim() === "") {
+        throw new GeminiError("Gemini returned an empty response.", {
+          reason: "gemini_empty",
+        });
+      }
+      return text;
+    },
+    "generateText",
+    opts.trace,
+  );
 }
 
 /**
  * Generate a typed JSON payload from Gemini.
  *
- * Adds a strict "respond with JSON only" suffix to the prompt and parses
- * the response via the shared JSON helper. The caller's type `T` is the
- * contract the prompt is expected to honor.
+ * When `responseSchema` is supplied, Gemini enforces the schema natively
+ * at generation time and no prompt-level JSON reminder is needed. When
+ * no schema is supplied we still add a terse "respond with JSON only"
+ * suffix and best-effort parse the response.
  */
 export async function generateJson<T>(
   prompt: string,
   opts: GenerateOptions = {},
 ): Promise<T> {
-  const hardenedPrompt = `${prompt}\n\nRespond with strict JSON only. Do not include commentary, markdown, or code fences.`;
-  const text = await generateText(hardenedPrompt, {
-    ...opts,
-    generationConfig: {
-      ...opts.generationConfig,
-      // `responseMimeType` nudges the model into JSON mode when supported.
-    },
-  });
+  const hasSchema = !!opts.responseSchema;
+  const finalPrompt = hasSchema
+    ? prompt
+    : `${prompt}\n\nRespond with strict JSON only. Do not include commentary, markdown, or code fences.`;
+
+  const text = await generateText(finalPrompt, opts);
+
   try {
     return parseJsonResponse<T>(text);
   } catch (err) {
-    throw new GeminiError("Failed to parse JSON from Gemini response.", { cause: err });
+    throw new GeminiError("Failed to parse JSON from Gemini response.", {
+      cause: err,
+      reason: "schema_validation_failed",
+    });
   }
 }

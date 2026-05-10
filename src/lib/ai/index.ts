@@ -1,3 +1,4 @@
+export * from "./context";
 export * from "./insightFormatter";
 export * from "./generateInsights";
 export * from "./generateBrief";

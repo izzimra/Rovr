@@ -11,7 +11,7 @@
  */
 
 import { NextRequest } from "next/server";
-import { generateInsights } from "../../../lib/ai/generateInsights";
+import { generateInsightsWithTrace } from "../../../lib/ai/generateInsights";
 import type { KPIData } from "../../../types/analytics";
 import type { RankedCustomer } from "../../../types/customer";
 import type { OptimizedRoute } from "../../../types/route";
@@ -36,14 +36,18 @@ export async function POST(req: NextRequest) {
   }
 
   if (!Array.isArray(body?.customers)) {
-    return errorJson("Request must include a `customers` array.", 400, "bad_request");
+    return errorJson(
+      "Request must include a `customers` array.",
+      400,
+      "bad_request",
+    );
   }
 
-  const insights = await generateInsights({
+  const { insights, trace } = await generateInsightsWithTrace({
     customers: body.customers,
     route: body.route,
     kpis: body.kpis,
   });
 
-  return okJson({ insights }, { startTime });
+  return okJson({ insights }, { startTime, trace, service: "insights" });
 }

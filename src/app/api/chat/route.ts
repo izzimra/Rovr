@@ -21,7 +21,7 @@
  */
 
 import { NextRequest } from "next/server";
-import { chatWithCopilot } from "../../../lib/ai/chatAssistant";
+import { chatWithCopilotWithTrace } from "../../../lib/ai/chatAssistant";
 import type { ChatMessage, CopilotContext } from "../../../types/ai";
 import { errorJson, okJson } from "../_lib/envelope";
 
@@ -43,11 +43,17 @@ export async function POST(req: NextRequest) {
   }
 
   if (typeof body?.message !== "string") {
-    return errorJson("Request must include a `message` string.", 400, "bad_request");
+    return errorJson(
+      "Request must include a `message` string.",
+      400,
+      "bad_request",
+    );
   }
 
   const context: CopilotContext = {
-    customers: Array.isArray(body.context?.customers) ? body.context.customers : [],
+    customers: Array.isArray(body.context?.customers)
+      ? body.context.customers
+      : [],
     route: body.context?.route,
     kpis: body.context?.kpis,
     history: Array.isArray(body.context?.history)
@@ -55,6 +61,10 @@ export async function POST(req: NextRequest) {
       : [],
   };
 
-  const response = await chatWithCopilot(body.message, context);
-  return okJson(response, { startTime });
+  const { response, trace } = await chatWithCopilotWithTrace(
+    body.message,
+    context,
+  );
+
+  return okJson(response, { startTime, trace, service: "copilot" });
 }

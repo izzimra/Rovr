@@ -80,11 +80,48 @@ export interface PrioritizationResult {
 /** Wrapper around any AI-generated payload for API responses. */
 export interface AIResponseEnvelope<T> {
   data: T;
-  meta: {
-    model: string;
-    latencyMs: number;
-    /** True when the payload is a deterministic fallback, not Gemini output. */
-    fallback: boolean;
-    generatedAt: string;
-  };
+  meta: AIResponseMeta;
 }
+
+/**
+ * Observability metadata attached to every AI-envelope response.
+ *
+ * `fallback`, `fallbackReason`, `attempts`, and `retries` let the frontend
+ * surface subtle degraded-mode indicators (and let us instrument the
+ * server) without changing the data contract for happy paths.
+ */
+export interface AIResponseMeta {
+  model: string;
+  latencyMs: number;
+  generatedAt: string;
+  /** True when the payload is a deterministic fallback, not Gemini output. */
+  fallback: boolean;
+  /** Short machine-readable reason when `fallback` is true. */
+  fallbackReason?: FallbackReason;
+  /** Total Gemini attempts (1 + retries). Omitted when no Gemini call ran. */
+  attempts?: number;
+  /** Number of retries after the first attempt. */
+  retries?: number;
+  /** Prompt/service identifier for cross-service correlation. */
+  service?: AIServiceName;
+}
+
+/** Stable machine-readable codes describing why we fell back. */
+export type FallbackReason =
+  | "no_api_key"
+  | "gemini_error"
+  | "gemini_timeout"
+  | "gemini_empty"
+  | "schema_validation_failed"
+  | "insufficient_context"
+  | "rate_limited"
+  | "unknown";
+
+/** Canonical names for each Gemini-backed service. Used for tracing. */
+export type AIServiceName =
+  | "prioritization"
+  | "customer_reasoning"
+  | "daily_brief"
+  | "route_reasoning"
+  | "insights"
+  | "copilot";
