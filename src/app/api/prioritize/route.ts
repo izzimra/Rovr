@@ -15,6 +15,7 @@
 import { NextRequest } from "next/server";
 import { rankCustomers } from "../../../lib/scoring/rankCustomers";
 import { explainCustomerPriorities } from "../../../lib/ai/generateReasoning";
+import { CallTrace } from "../../../lib/gemini/helpers";
 import type { Customer } from "../../../types/customer";
 import { errorJson, okJson } from "../_lib/envelope";
 
@@ -36,18 +37,22 @@ export async function POST(req: NextRequest) {
   }
 
   if (!Array.isArray(body?.customers)) {
-    return errorJson("Request must include a `customers` array.", 400, "bad_request");
+    return errorJson(
+      "Request must include a `customers` array.",
+      400,
+      "bad_request",
+    );
   }
 
+  const trace = new CallTrace();
   const ranked = rankCustomers(body.customers);
+  const hydrated = await explainCustomerPriorities(ranked, {
+    topN: body.topN ?? 10,
+    trace,
+  });
 
-  let hydrated = ranked;
-  let fallback = false;
-  try {
-    hydrated = await explainCustomerPriorities(ranked, { topN: body.topN ?? 10 });
-  } catch {
-    fallback = true;
-  }
-
-  return okJson({ ranked: hydrated }, { startTime, fallback });
+  return okJson(
+    { ranked: hydrated },
+    { startTime, trace, service: "customer_reasoning" },
+  );
 }

@@ -22,10 +22,18 @@ export function toCustomerSummary(c: RankedCustomer): CustomerSummary {
   };
 }
 
-/** Format RM currency without pulling in a heavy i18n dependency. */
+/**
+ * Format RM currency without pulling in a heavy i18n dependency.
+ *
+ * Note: we intentionally use the generic `en-US` grouping (3-digit
+ * thousands) rather than `en-MY`. Node's default ICU build maps `en-MY`
+ * to the Indian grouping convention (2,05,000) which is not how
+ * Malaysian businesses write RM values. Standard thousands grouping is
+ * the convention across Malaysian corporate finance reporting.
+ */
 export function formatRinggit(value: number): string {
   if (!Number.isFinite(value)) return "RM0";
-  return `RM${Math.round(value).toLocaleString("en-MY")}`;
+  return `RM${Math.round(value).toLocaleString("en-US")}`;
 }
 
 /**

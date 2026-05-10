@@ -2,8 +2,9 @@
  * Low-level Gemini service functions.
  *
  * Each function takes typed input, invokes Gemini with the matching prompt
- * from `./prompts.ts`, and returns a typed response. These are the
- * primitives that the higher-level `lib/ai/*` services compose.
+ * from `./prompts.ts`, enforces a native response schema, and returns a
+ * typed response. These are the primitives that the higher-level
+ * `lib/ai/*` services compose.
  *
  * Intentionally free of business logic so the same primitives can be
  * reused from API routes, server actions, and background jobs.
@@ -23,6 +24,14 @@ import {
   buildPrioritizationPrompt,
   buildRouteReasoningPrompt,
 } from "./prompts";
+import {
+  COPILOT_SCHEMA,
+  CUSTOMER_REASONING_SCHEMA,
+  DAILY_BRIEF_SCHEMA,
+  INSIGHTS_SCHEMA,
+  PRIORITIZATION_SCHEMA,
+  ROUTE_REASONING_SCHEMA,
+} from "./schemas";
 import type {
   CustomerSummary,
   RankedCustomer,
@@ -35,7 +44,7 @@ import type {
   DailyBrief,
   PrioritizationResult,
 } from "../../types/ai";
-import { clamp, generateId } from "./helpers";
+import { CallTrace, clamp, generateId } from "./helpers";
 import { GEMINI_MODEL } from "./config";
 
 // --- Prioritization -----------------------------------------------------
@@ -51,11 +60,14 @@ interface RawPrioritization {
 
 export async function rankCustomersWithGemini(
   customers: CustomerSummary[],
+  trace?: CallTrace,
 ): Promise<PrioritizationResult> {
   const prompt = buildPrioritizationPrompt(customers);
   const raw = await generateJson<RawPrioritization>(prompt, {
     systemInstruction: ROVR_SYSTEM_INSTRUCTION,
     generationConfig: STRUCTURED_GENERATION_CONFIG,
+    responseSchema: PRIORITIZATION_SCHEMA,
+    trace,
   });
 
   const rankings = (raw.rankings ?? []).map((r) => ({
@@ -78,16 +90,21 @@ export async function generateDailyBriefWithGemini(
   customers: RankedCustomer[],
   route: OptimizedRoute | undefined,
   kpis: KPIData | undefined,
+  trace?: CallTrace,
 ): Promise<DailyBrief> {
   const prompt = buildDailyBriefPrompt(customers, route, kpis);
   const raw = await generateJson<Omit<DailyBrief, "generatedAt">>(prompt, {
     systemInstruction: ROVR_SYSTEM_INSTRUCTION,
     generationConfig: NARRATIVE_GENERATION_CONFIG,
+    responseSchema: DAILY_BRIEF_SCHEMA,
+    trace,
   });
   return {
     headline: raw.headline ?? "",
     summary: raw.summary ?? "",
-    talkingPoints: Array.isArray(raw.talkingPoints) ? raw.talkingPoints.slice(0, 5) : [],
+    talkingPoints: Array.isArray(raw.talkingPoints)
+      ? raw.talkingPoints.slice(0, 5)
+      : [],
     topCustomer: raw.topCustomer ?? customers[0]?.customer_name ?? "",
     generatedAt: new Date().toISOString(),
   };
@@ -97,11 +114,14 @@ export async function generateDailyBriefWithGemini(
 
 export async function generateRouteReasoningWithGemini(
   route: OptimizedRoute,
+  trace?: CallTrace,
 ): Promise<RouteInsight> {
   const prompt = buildRouteReasoningPrompt(route);
   const raw = await generateJson<RouteInsight>(prompt, {
     systemInstruction: ROVR_SYSTEM_INSTRUCTION,
     generationConfig: NARRATIVE_GENERATION_CONFIG,
+    responseSchema: ROUTE_REASONING_SCHEMA,
+    trace,
   });
   return {
     headline: raw.headline ?? "",
@@ -114,11 +134,14 @@ export async function generateRouteReasoningWithGemini(
 
 export async function explainCustomerWithGemini(
   customer: RankedCustomer,
+  trace?: CallTrace,
 ): Promise<string> {
   const prompt = buildCustomerReasoningPrompt(customer);
   const raw = await generateJson<{ explanation: string }>(prompt, {
     systemInstruction: ROVR_SYSTEM_INSTRUCTION,
     generationConfig: STRUCTURED_GENERATION_CONFIG,
+    responseSchema: CUSTOMER_REASONING_SCHEMA,
+    trace,
   });
   return (raw.explanation ?? "").slice(0, 200);
 }
@@ -140,11 +163,14 @@ export async function generateInsightsWithGemini(
   customers: RankedCustomer[],
   route: OptimizedRoute | undefined,
   kpis: KPIData | undefined,
+  trace?: CallTrace,
 ): Promise<AIInsight[]> {
   const prompt = buildInsightsPrompt(customers, route, kpis);
   const raw = await generateJson<RawInsights>(prompt, {
     systemInstruction: ROVR_SYSTEM_INSTRUCTION,
     generationConfig: NARRATIVE_GENERATION_CONFIG,
+    responseSchema: INSIGHTS_SCHEMA,
+    trace,
   });
 
   return (raw.insights ?? []).slice(0, 6).map((i) => ({
@@ -173,14 +199,19 @@ export async function chatWithGemini(
     kpis?: KPIData;
     history: ChatMessage[];
   },
+  trace?: CallTrace,
 ): Promise<RawCopilotReply> {
   const prompt = buildCopilotPrompt(userMessage, context);
   const raw = await generateJson<RawCopilotReply>(prompt, {
     systemInstruction: ROVR_SYSTEM_INSTRUCTION,
     generationConfig: NARRATIVE_GENERATION_CONFIG,
+    responseSchema: COPILOT_SCHEMA,
+    trace,
   });
   return {
     reply: raw.reply ?? "",
-    suggestions: Array.isArray(raw.suggestions) ? raw.suggestions.slice(0, 3) : [],
+    suggestions: Array.isArray(raw.suggestions)
+      ? raw.suggestions.slice(0, 3)
+      : [],
   };
 }
