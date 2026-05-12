@@ -6,117 +6,36 @@
  * Left-hand panel of the Rovr dashboard: a scrollable, premium list of
  * ranked customers surfaced by the prioritization service.
  *
- * Visual grammar (see `.kiro/specs/rovr-frontend-polish/requirements.md`
- * Requirement 5):
- *   - Compact card per row: `bg-[#111111] border-white/5 rounded-xl`.
- *   - Rank number in muted tabular numerals on the left.
- *   - Customer name + location (location is UI-only; see DisplayCustomer).
- *   - Priority badge with tier-tinted `bg-<tier>/10 text-<tier>-400`.
- *   - Muted AI reasoning snippet below the name row.
- *   - Framer Motion layout animations — row enter/exit/reorder feel smooth
- *     the moment the list becomes dynamic from `useCustomerStore.ranked`.
- *
- * Presentation-only. Mock data will be replaced with a read-only selector:
- *   `useCustomerStore((s) => s.ranked)` — see Requirement 5.2.
+ * Data source: reads `useCustomerStore.ranked` per frontend spec Req 5.1.
+ * The "location" field shown in each row is derived UI-only from the
+ * lat/lng via a coarse Klang Valley classifier — the underlying domain
+ * type remains untouched per Req 9.2.
  */
 
 import { AnimatePresence, motion } from "framer-motion";
 
 import { Badge } from "@/components/ui/badge";
+import { SkeletonCard, SkeletonLine } from "@/components/SkeletonCard";
+import { classifyTerritory } from "@/lib/ai/context";
+import { useCustomerStore } from "@/store/customer-store";
 import type { PriorityTier, RankedCustomer } from "@/types/customer";
 
-/**
- * UI-only extension of `RankedCustomer`. `location` is a human-readable
- * label derived from `latitude` / `longitude` upstream; the underlying
- * domain type remains untouched per Requirement 9.2.
- */
-type DisplayCustomer = RankedCustomer & { location: string };
-
-/** Malaysian Ringgit formatter — matches the `en-MY` product rule. */
-const MYR = new Intl.NumberFormat("en-MY", {
+/** Malaysian Ringgit formatter — matches the product rule. */
+const MYR = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "MYR",
+  currencyDisplay: "narrowSymbol",
   maximumFractionDigits: 0,
 });
 
-/** Mock data grounded in the Klang Valley. Shape-compatible with the store. */
-const MOCK_CUSTOMERS: readonly DisplayCustomer[] = [
-  {
-    rank: 1,
-    score: 94.2,
-    tier: "High",
-    customer_name: "Tan Beverages Sdn Bhd",
-    location: "Petaling Jaya",
-    latitude: 3.1073,
-    longitude: 101.6067,
-    sales_value: 18400,
-    priority: 9,
-    last_visit_days: 21,
-    potential_score: 92,
-    explanation: "High churn risk, nearest to current route",
-  },
-  {
-    rank: 2,
-    score: 88.6,
-    tier: "High",
-    customer_name: "Sinar Mart",
-    location: "Shah Alam",
-    latitude: 3.0733,
-    longitude: 101.5185,
-    sales_value: 14200,
-    priority: 8,
-    last_visit_days: 14,
-    potential_score: 86,
-    explanation: "Top-tier pipeline, due for quarterly review",
-  },
-  {
-    rank: 3,
-    score: 74.1,
-    tier: "Medium",
-    customer_name: "Kopitiam Harmoni",
-    location: "Subang Jaya",
-    latitude: 3.0438,
-    longitude: 101.5806,
-    sales_value: 8700,
-    priority: 6,
-    last_visit_days: 9,
-    potential_score: 71,
-    explanation: "Stable account, high upsell propensity",
-  },
-  {
-    rank: 4,
-    score: 62.8,
-    tier: "Medium",
-    customer_name: "Bangi Fresh Grocers",
-    location: "Bangi",
-    latitude: 2.9129,
-    longitude: 101.7821,
-    sales_value: 6100,
-    priority: 5,
-    last_visit_days: 30,
-    potential_score: 64,
-    explanation: "Lapsed 30 days, worth a courtesy stop",
-  },
-  {
-    rank: 5,
-    score: 41.5,
-    tier: "Low",
-    customer_name: "Central Provisions",
-    location: "Kuala Lumpur",
-    latitude: 3.139,
-    longitude: 101.6869,
-    sales_value: 3400,
-    priority: 3,
-    last_visit_days: 5,
-    potential_score: 38,
-    explanation: "Recent visit, low urgency — bundle if on route",
-  },
-];
-
 export function CustomerRankingPanel() {
+  const ranked = useCustomerStore((s) => s.ranked);
+  const isLoading = useCustomerStore((s) => s.isLoading);
+  const error = useCustomerStore((s) => s.error);
+
   return (
     <div className="flex h-full w-full flex-col">
-      <PanelHeader count={MOCK_CUSTOMERS.length} />
+      <PanelHeader count={ranked.length} />
 
       <div
         className="
@@ -125,13 +44,22 @@ export function CustomerRankingPanel() {
           [scrollbar-color:theme(colors.zinc.700)_transparent]
         "
       >
-        <motion.ul className="flex flex-col gap-2" layout>
-          <AnimatePresence initial={false}>
-            {MOCK_CUSTOMERS.map((customer) => (
-              <CustomerRow key={customer.customer_name} customer={customer} />
-            ))}
-          </AnimatePresence>
-        </motion.ul>
+        {isLoading && ranked.length === 0 ? (
+          <SkeletonList />
+        ) : ranked.length === 0 ? (
+          <EmptyState error={error} />
+        ) : (
+          <motion.ul className="flex flex-col gap-2" layout>
+            <AnimatePresence initial={false}>
+              {ranked.map((customer) => (
+                <CustomerRow
+                  key={customer.id ?? customer.customer_name}
+                  customer={customer}
+                />
+              ))}
+            </AnimatePresence>
+          </motion.ul>
+        )}
       </div>
     </div>
   );
@@ -151,7 +79,7 @@ function PanelHeader({ count }: { count: number }) {
         </span>
       </div>
       <span className="text-xs font-medium tabular-nums text-zinc-500">
-        {count} stops
+        {count} {count === 1 ? "stop" : "stops"}
       </span>
     </header>
   );
@@ -159,7 +87,9 @@ function PanelHeader({ count }: { count: number }) {
 
 /* ─── Row ───────────────────────────────────────────────────────── */
 
-function CustomerRow({ customer }: { customer: DisplayCustomer }) {
+function CustomerRow({ customer }: { customer: RankedCustomer }) {
+  const location = classifyTerritory(customer.latitude, customer.longitude);
+
   return (
     <motion.li
       layout
@@ -185,7 +115,7 @@ function CustomerRow({ customer }: { customer: DisplayCustomer }) {
                 {customer.customer_name}
               </div>
               <div className="mt-0.5 truncate text-xs text-zinc-500">
-                {customer.location}
+                {location}
               </div>
             </div>
 
@@ -195,9 +125,11 @@ function CustomerRow({ customer }: { customer: DisplayCustomer }) {
       </div>
 
       {/* Row 2 — AI reasoning snippet */}
-      <p className="mt-2.5 pl-9 text-xs leading-relaxed text-zinc-400">
-        {customer.explanation}
-      </p>
+      {customer.explanation ? (
+        <p className="mt-2.5 pl-9 text-xs leading-relaxed text-zinc-400">
+          {customer.explanation}
+        </p>
+      ) : null}
 
       {/* Row 3 — sales value footnote */}
       <div className="mt-2 flex items-center justify-between pl-9">
@@ -212,7 +144,6 @@ function CustomerRow({ customer }: { customer: DisplayCustomer }) {
   );
 }
 
-/** Rank chip — tabular numerals, muted, consistent width. */
 function RankBadge({ rank }: { rank: number }) {
   return (
     <div
@@ -224,7 +155,6 @@ function RankBadge({ rank }: { rank: number }) {
   );
 }
 
-/** Priority tier pill — glows per tier. */
 const TIER_CLASSES: Record<PriorityTier, string> = {
   High: "bg-red-500/10 text-red-400 ring-1 ring-inset ring-red-500/20",
   Medium:
@@ -235,6 +165,39 @@ const TIER_CLASSES: Record<PriorityTier, string> = {
 function TierBadge({ tier }: { tier: PriorityTier }) {
   return (
     <Badge className={`shrink-0 ${TIER_CLASSES[tier]}`}>{tier}</Badge>
+  );
+}
+
+/* ─── Placeholders ──────────────────────────────────────────────── */
+
+function SkeletonList() {
+  return (
+    <ul className="flex flex-col gap-2" aria-busy="true" aria-label="Loading customers">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <li key={i}>
+          <SkeletonCard className="h-[82px] w-full">
+            <SkeletonLine className="h-3 w-32" />
+            <SkeletonLine className="h-2.5 w-20" />
+            <SkeletonLine className="h-2 w-full" />
+          </SkeletonCard>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function EmptyState({ error }: { error: string | null }) {
+  return (
+    <div className="flex h-full min-h-[240px] flex-col items-center justify-center rounded-xl border border-white/5 bg-zinc-900/40 p-6 text-center">
+      <div className="text-sm font-medium text-zinc-300">
+        {error ? "Couldn't load customers" : "No customers loaded yet"}
+      </div>
+      <p className="mt-2 max-w-[240px] text-xs leading-relaxed text-zinc-500">
+        {error
+          ? error
+          : "Upload a CSV or activate Demo Mode to populate today's territory."}
+      </p>
+    </div>
   );
 }
 

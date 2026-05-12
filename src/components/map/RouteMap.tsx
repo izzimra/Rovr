@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Map_View — interactive Mapbox GL JS map for Rovr.
+ * Map_View - interactive Mapbox GL JS map for Rovr.
  *
  * Renders ranked customers as numbered tier-colored markers and, when
  * `showRoute` is true, draws a polyline connecting them in `routeOrder`.
@@ -11,6 +11,10 @@
  * mapbox-gl is loaded lazily through `getMapboxGL()` so the heavy bundle
  * is kept out of the server payload and initialization errors (missing
  * token, network failure) degrade gracefully into an inline message.
+ *
+ * A ResizeObserver fires `map.resize()` whenever the container's box
+ * size changes. This fixes the common "invisible map" issue where the
+ * map initializes before the parent layout is laid out.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -34,9 +38,9 @@ const ROUTE_SOURCE_ID = "rovr-route";
 const ROUTE_LAYER_ID = "rovr-route-line";
 
 const TIER_COLORS: Record<PriorityTier, string> = {
-  High: "#ef4444", // red-500
-  Medium: "#f59e0b", // amber-500
-  Low: "#10b981", // emerald-500
+  High: "#a78bfa", // violet-400
+  Medium: "#60a5fa", // blue-400
+  Low: "#71717a", // zinc-500
 };
 
 export default function RouteMap({
@@ -66,6 +70,7 @@ export default function RouteMap({
   // -------------------------------------------------------------------
   useEffect(() => {
     let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
 
     if (!hasMapboxToken()) {
       setStatus("error");
@@ -75,46 +80,94 @@ export default function RouteMap({
       return;
     }
 
-    (async () => {
+    const initMap = async () => {
       try {
         const mapboxgl = await getMapboxGL();
         if (cancelled || !containerRef.current) return;
 
-        const initialCenter = await resolveInitialCenter(customers);
+        // Wait for the container to have non-zero dimensions. The parent
+        // uses absolute positioning and framer-motion transitions, which
+        // occasionally lays out at 0x0 for one frame. Mapbox initialized
+        // against a 0x0 element renders invisible and never recovers on
+        // its own — we'd rather wait a tick than hit that bug.
+        await waitForContainerSize(containerRef.current);
+        if (cancelled || !containerRef.current) return;
+
+        const initialCenter = pickInitialCenter(customers);
 
         const map = new mapboxgl.Map({
           container: containerRef.current,
-          style: "mapbox://styles/mapbox/streets-v12",
+          style: "mapbox://styles/mapbox/dark-v11",
           center: initialCenter,
-          zoom: 11,
+          zoom: 10.5,
+          attributionControl: false,
         });
 
-        map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+        map.addControl(
+          new mapboxgl.NavigationControl({ showCompass: false, visualizePitch: false }),
+          "top-right",
+        );
+        map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
 
         map.on("load", () => {
           if (cancelled) return;
           mapRef.current = map;
           setStatus("ready");
+          // Kick a resize on the next frame — defends against the parent
+          // laying out after the map initializes.
+          requestAnimationFrame(() => {
+            try {
+              map.resize();
+            } catch {
+              /* noop */
+            }
+          });
         });
 
         map.on("error", (e) => {
           if (cancelled) return;
           const message = e?.error?.message ?? "Map failed to load.";
-          setStatus("error");
-          setErrorMessage(message);
+          // Don't mask a ready map with an error overlay — Mapbox fires
+          // transient "error" events for missing sprites etc. Only mark
+          // the map as errored if it never loaded.
+          if (!mapRef.current) {
+            setStatus("error");
+            setErrorMessage(message);
+          } else if (typeof console !== "undefined") {
+            console.warn("[Mapbox] transient error:", message);
+          }
         });
+
+        // Ensure the canvas keeps pace with container size changes.
+        if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+          resizeObserver = new ResizeObserver(() => {
+            try {
+              map.resize();
+            } catch {
+              /* noop */
+            }
+          });
+          resizeObserver.observe(containerRef.current);
+        }
       } catch (err) {
         if (cancelled) return;
         setStatus("error");
         setErrorMessage(err instanceof Error ? err.message : "Failed to load Mapbox.");
       }
-    })();
+    };
+
+    void initMap();
 
     return () => {
       cancelled = true;
+      if (resizeObserver) resizeObserver.disconnect();
       clearMarkers();
       if (mapRef.current) {
-        mapRef.current.remove();
+        try {
+          mapRef.current.remove();
+        } catch {
+          /* noop */
+        }
         mapRef.current = null;
       }
     };
@@ -183,7 +236,6 @@ export default function RouteMap({
     };
 
     if (coordinates.length < 2) {
-      // Nothing to draw — remove any previous line.
       if (map.getLayer(ROUTE_LAYER_ID)) map.removeLayer(ROUTE_LAYER_ID);
       if (map.getSource(ROUTE_SOURCE_ID)) map.removeSource(ROUTE_SOURCE_ID);
       return;
@@ -199,9 +251,9 @@ export default function RouteMap({
         source: ROUTE_SOURCE_ID,
         layout: { "line-join": "round", "line-cap": "round" },
         paint: {
-          "line-color": "#2563eb", // blue-600
-          "line-width": 4,
-          "line-opacity": 0.85,
+          "line-color": "#8b5cf6",
+          "line-width": 3.5,
+          "line-opacity": 0.9,
         },
       });
     }
@@ -216,17 +268,57 @@ export default function RouteMap({
   // Render
   // -------------------------------------------------------------------
   return (
-    <div className={className} style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+    <div
+      className={className}
+      style={{ position: "relative", width: "100%", height: "100%" }}
+    >
+      <div
+        ref={containerRef}
+        style={{ width: "100%", height: "100%", minHeight: 240 }}
+      />
       {status === "loading" && <Overlay>Loading map…</Overlay>}
       {status === "error" && (
         <Overlay>
           <strong>Map unavailable.</strong>
-          <div style={{ marginTop: 4, fontSize: 13, opacity: 0.85 }}>{errorMessage}</div>
+          <div style={{ marginTop: 4, fontSize: 13, opacity: 0.85 }}>
+            {errorMessage}
+          </div>
         </Overlay>
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Container sizing
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve once the given element has a non-zero rendered size.
+ *
+ * Uses ResizeObserver to avoid busy-polling. Falls back to a short
+ * timeout on browsers that missed the update (very rare).
+ */
+function waitForContainerSize(el: HTMLElement): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+      resolve();
+      return;
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve();
+    };
+    const observer = new ResizeObserver(() => {
+      if (el.offsetWidth > 0 && el.offsetHeight > 0) finish();
+    });
+    observer.observe(el);
+    const timer = setTimeout(finish, 500); // hard ceiling
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -259,8 +351,8 @@ function Overlay({ children }: { children: React.ReactNode }) {
 function buildMarkerElement(index: number, tier: PriorityTier): HTMLDivElement {
   const el = document.createElement("div");
   el.setAttribute("aria-label", `Stop ${index}, ${tier} priority`);
-  el.style.width = "28px";
-  el.style.height = "28px";
+  el.style.width = "30px";
+  el.style.height = "30px";
   el.style.borderRadius = "50%";
   el.style.background = TIER_COLORS[tier];
   el.style.color = "white";
@@ -268,8 +360,8 @@ function buildMarkerElement(index: number, tier: PriorityTier): HTMLDivElement {
   el.style.alignItems = "center";
   el.style.justifyContent = "center";
   el.style.font = "600 12px/1 system-ui, sans-serif";
-  el.style.border = "2px solid white";
-  el.style.boxShadow = "0 2px 4px rgba(0,0,0,0.25)";
+  el.style.border = "2px solid rgba(255,255,255,0.95)";
+  el.style.boxShadow = "0 0 0 4px rgba(139, 92, 246, 0.18), 0 4px 12px rgba(0,0,0,0.5)";
   el.style.cursor = "pointer";
   el.textContent = String(index);
   return el;
@@ -298,48 +390,26 @@ function escapeHtml(s: string): string {
 }
 
 function formatCurrency(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  try {
-    return new Intl.NumberFormat("en-MY", {
-      style: "currency",
-      currency: "MYR",
-      maximumFractionDigits: 0,
-    }).format(value);
-  } catch {
-    return `RM ${Math.round(value).toLocaleString()}`;
-  }
+  if (!Number.isFinite(value)) return "-";
+  return `RM ${Math.round(value).toLocaleString("en-US")}`;
 }
 
 // ---------------------------------------------------------------------------
-// Geolocation / fit helpers
+// Initial center
 // ---------------------------------------------------------------------------
 
-async function resolveInitialCenter(customers: RankedCustomer[]): Promise<[number, number]> {
-  const fromGeo = await tryGeolocate();
-  if (fromGeo) return fromGeo;
+/**
+ * Pick an initial center synchronously so the map can mount with the
+ * right viewport even before geolocation resolves. We used to await the
+ * browser's geolocation prompt here; that delayed map creation by up to
+ * 4 seconds and created the "empty canvas" problem we keep hitting.
+ * Default to the first customer or central KL — either way, the markers
+ * will trigger a fitBounds once they're added.
+ */
+function pickInitialCenter(customers: RankedCustomer[]): [number, number] {
   const first = customers[0];
   if (first) return [first.longitude, first.latitude];
   return KL_CENTER;
-}
-
-function tryGeolocate(): Promise<[number, number] | null> {
-  if (typeof navigator === "undefined" || !navigator.geolocation) {
-    return Promise.resolve(null);
-  }
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 4000);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        clearTimeout(timeout);
-        resolve([pos.coords.longitude, pos.coords.latitude]);
-      },
-      () => {
-        clearTimeout(timeout);
-        resolve(null);
-      },
-      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 4000 },
-    );
-  });
 }
 
 function fitToCustomers(map: MapboxMap, customers: RankedCustomer[]) {
@@ -365,6 +435,6 @@ function fitToCustomers(map: MapboxMap, customers: RankedCustomer[]) {
       [minLng, minLat],
       [maxLng, maxLat],
     ],
-    { padding: 48, duration: 400, maxZoom: 14 },
+    { padding: 60, duration: 500, maxZoom: 13 },
   );
 }

@@ -3,106 +3,124 @@
 /**
  * MapShell
  *
- * Center panel of the Rovr dashboard. Renders a dark, premium container
- * that will host the Mapbox GL JS canvas. Per Requirement 7 and the
- * architectural boundary in Requirement 9.4, this component must NOT
- * import or initialize Mapbox GL JS, the Directions API, or the Matrix
- * API — the maps teammate will mount their renderer into the bounded
- * region flagged by `data-rovr-map-slot`.
+ * Center panel of the Rovr dashboard. Mounts `RouteMap` (Mapbox GL JS) at
+ * the full size of its parent container, then overlays route-summary
+ * header + origin chip on top. No absolute-positioned grid backdrops,
+ * no nested map slots — RouteMap owns the entire box so Mapbox gets
+ * real dimensions the moment the grid lays out.
  *
- * Visual grammar:
- *   - Base shell: `bg-zinc-900 border-white/10 rounded-xl`, with a soft
- *     grid backdrop so the empty state still reads as "a map".
- *   - Floating glass header overlay with route totals.
- *   - Floating glass control stack (zoom in / out / recenter) on the right.
- *   - Bottom attribution / origin chip on the left.
+ * Data flow:
+ *   - useCustomerStore.ranked -> markers
+ *   - useRouteStore.route    -> polyline + summary stats
+ *   - useRouteStore.isOptimizing -> overlay
  */
 
-import { Layers, Minus, Navigation, Plus } from "lucide-react";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
+import { Navigation } from "lucide-react";
 
-/** Mock route stats — swap for `useRouteStore((s) => s.route)` when wired. */
-const MOCK_ROUTE_STATS = {
-  originLabel: "Subang Depot",
-  stopCount: 12,
-  totalDistanceKm: 58.4,
-  totalDurationMinutes: 143,
-} as const;
+import RouteMap from "@/components/map/RouteMap";
+import { useCustomerStore } from "@/store/customer-store";
+import { useRouteStore } from "@/store/route-store";
+import type { RankedCustomer } from "@/types/customer";
 
 export function MapShell() {
-  return (
-    <div
-      className="
-        relative h-full w-full overflow-hidden rounded-xl
-        border border-white/10 bg-zinc-900
-      "
-    >
-      {/* Subtle grid backdrop — reads as "map" before Mapbox mounts. */}
-      <MapBackdrop />
+  const ranked = useCustomerStore((s) => s.ranked);
+  const route = useRouteStore((s) => s.route);
+  const isOptimizing = useRouteStore((s) => s.isOptimizing);
+  const routeError = useRouteStore((s) => s.error);
 
-      {/*
-        Bounded region where Mapbox GL JS will be mounted by the maps
-        teammate. Flagged with `data-rovr-map-slot` per Requirement 7.9.
-      */}
-      <div
-        data-rovr-map-slot
-        className="absolute inset-0"
-        aria-label="Map viewport"
+  // Synthesize stable ids so RouteMap's id-based polyline lookup works.
+  const { mapCustomers, routeOrder } = useMemo(() => {
+    const withIds: RankedCustomer[] = ranked.map((c) => ({
+      ...c,
+      id: c.id ?? `rovr_${c.customer_name}`,
+    }));
+    const order = route?.stops
+      .map((s) => {
+        const match = withIds.find(
+          (c) => c.customer_name === s.customer.customer_name,
+        );
+        return match?.id ?? `rovr_${s.customer.customer_name}`;
+      })
+      .filter((id): id is string => Boolean(id)) ?? [];
+    return { mapCustomers: withIds, routeOrder: order };
+  }, [ranked, route]);
+
+  const showRoute = !!route && route.stops.length > 1;
+
+  return (
+    <div className="relative h-full w-full">
+      {/* Full-bleed Mapbox canvas. No absolute positioning; RouteMap
+          fills its parent via width/height 100%. */}
+      <RouteMap
+        customers={mapCustomers}
+        routeOrder={routeOrder}
+        showRoute={showRoute}
       />
 
-      {/* Floating header overlay — glassmorphism */}
-      <RouteHeader />
+      {/* Route summary header (overlay) */}
+      <RouteHeader
+        stopCount={route?.stops.length ?? 0}
+        distanceKm={route?.totalDistanceKm ?? 0}
+        durationMin={route?.totalDurationMinutes ?? 0}
+      />
 
-      {/* Floating control stack */}
-      <MapControls />
+      {/* Origin chip (overlay) */}
+      <OriginChip label={route?.originLabel ?? "KL Central"} />
 
-      {/* Origin chip */}
-      <OriginChip label={MOCK_ROUTE_STATS.originLabel} />
+      {/* Optimisation overlay */}
+      {isOptimizing ? <OptimizingOverlay /> : null}
+
+      {/* Error toast */}
+      {routeError ? <RouteErrorBanner message={routeError} /> : null}
     </div>
   );
 }
 
-/* ─── Backdrop ──────────────────────────────────────────────────── */
+/* ─── Overlays ──────────────────────────────────────────────────── */
 
-/**
- * Dark radial + line-grid backdrop. Pure CSS, no SVG assets. Gives the
- * shell a "map canvas" feel before Mapbox mounts, and disappears behind
- * the real tiles once it does.
- */
-function MapBackdrop() {
+function OptimizingOverlay() {
   return (
-    <div
-      aria-hidden="true"
-      className="
-        pointer-events-none absolute inset-0
-        bg-[radial-gradient(circle_at_50%_30%,rgba(59,130,246,0.06),transparent_60%)]
-      "
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/40 backdrop-blur-sm"
     >
-      <div
-        className="
-          absolute inset-0 opacity-[0.35]
-          [background-image:linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)]
-          [background-size:48px_48px]
-        "
-      />
-      {/* Edge vignette so the grid fades into the zinc surface. */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_45%,rgba(9,9,11,0.85)_100%)]" />
+      <div className="rounded-xl border border-blue-500/30 bg-black/60 px-5 py-3 text-sm text-blue-200 shadow-[0_0_40px_-12px_rgba(59,130,246,0.6)]">
+        Optimising route…
+      </div>
+    </motion.div>
+  );
+}
+
+function RouteErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="pointer-events-none absolute bottom-20 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-300 backdrop-blur">
+      Route error: {message}
     </div>
   );
 }
 
-/* ─── Header overlay ────────────────────────────────────────────── */
-
-function RouteHeader() {
+function RouteHeader({
+  stopCount,
+  distanceKm,
+  durationMin,
+}: {
+  stopCount: number;
+  distanceKm: number;
+  durationMin: number;
+}) {
   return (
     <motion.header
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
       className="
-        absolute left-4 right-4 top-4 z-10
+        pointer-events-none absolute left-4 right-4 top-4 z-10
         flex items-center justify-between gap-4
-        rounded-xl border border-white/10 bg-black/40 px-4 py-3
+        rounded-xl border border-white/10 bg-black/50 px-4 py-3
         shadow-[0_8px_32px_-16px_rgba(0,0,0,0.6)]
         backdrop-blur-xl
       "
@@ -124,23 +142,20 @@ function RouteHeader() {
             Optimized Route Overview
           </span>
           <span className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500">
-            Today's plan · Klang Valley
+            Today&apos;s plan · Klang Valley
           </span>
         </div>
       </div>
 
       <div className="flex items-center divide-x divide-white/5">
-        <StatPill
-          label="Stops"
-          value={String(MOCK_ROUTE_STATS.stopCount)}
-        />
+        <StatPill label="Stops" value={String(stopCount)} />
         <StatPill
           label="Distance"
-          value={`${MOCK_ROUTE_STATS.totalDistanceKm.toFixed(1)} km`}
+          value={stopCount ? `${distanceKm.toFixed(1)} km` : "—"}
         />
         <StatPill
           label="Duration"
-          value={formatMinutes(MOCK_ROUTE_STATS.totalDurationMinutes)}
+          value={stopCount ? formatMinutes(durationMin) : "—"}
         />
       </div>
     </motion.header>
@@ -160,64 +175,13 @@ function StatPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ─── Control stack ─────────────────────────────────────────────── */
-
-function MapControls() {
-  return (
-    <div
-      className="
-        absolute right-4 top-24 z-10 flex flex-col
-        overflow-hidden rounded-xl border border-white/10
-        bg-black/40 shadow-[0_8px_32px_-16px_rgba(0,0,0,0.6)] backdrop-blur-xl
-      "
-    >
-      <ControlButton label="Zoom in">
-        <Plus className="h-4 w-4" strokeWidth={2.25} />
-      </ControlButton>
-      <div className="h-px bg-white/5" />
-      <ControlButton label="Zoom out">
-        <Minus className="h-4 w-4" strokeWidth={2.25} />
-      </ControlButton>
-      <div className="h-px bg-white/5" />
-      <ControlButton label="Toggle layers">
-        <Layers className="h-4 w-4" strokeWidth={2.25} />
-      </ControlButton>
-    </div>
-  );
-}
-
-function ControlButton({
-  children,
-  label,
-}: {
-  children: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      className="
-        flex h-9 w-9 cursor-pointer items-center justify-center
-        text-zinc-300 transition-colors duration-200
-        hover:bg-white/5 hover:text-blue-300
-        focus:outline-none focus-visible:bg-white/5 focus-visible:text-blue-300
-      "
-    >
-      {children}
-    </button>
-  );
-}
-
-/* ─── Origin chip ───────────────────────────────────────────────── */
-
 function OriginChip({ label }: { label: string }) {
   return (
     <div
       className="
-        absolute bottom-4 left-4 z-10
+        pointer-events-none absolute bottom-4 left-4 z-10
         flex items-center gap-2 rounded-full
-        border border-white/10 bg-black/40 px-3 py-1.5
+        border border-white/10 bg-black/50 px-3 py-1.5
         backdrop-blur-xl
       "
     >
@@ -231,8 +195,6 @@ function OriginChip({ label }: { label: string }) {
     </div>
   );
 }
-
-/* ─── Helpers ───────────────────────────────────────────────────── */
 
 function formatMinutes(mins: number): string {
   if (mins < 60) return `${mins} min`;

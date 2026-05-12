@@ -1,10 +1,10 @@
-/**
+﻿/**
  * Daily sales brief service.
  *
  * Produces the morning executive brief shown at the top of the insights
  * panel. When Gemini is unavailable, returns a deterministic brief that
  * is still grounded in the rep's current data and still sounds like a
- * regional sales director — it never self-identifies as a fallback.
+ * regional sales director â€” it never self-identifies as a fallback.
  */
 
 import type { RankedCustomer } from "../../types/customer";
@@ -52,6 +52,8 @@ export async function generateDailyBriefWithTrace(
     const brief = await generateDailyBriefWithGemini(customers, route, kpis, trace);
     return { brief, trace };
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[briefing] gemini error:", err);
     trace.markFallback(classifyError(err));
     return { brief: buildNarrativeBrief(customers, route, kpis), trace };
   }
@@ -97,9 +99,8 @@ function buildNarrativeBrief(
   const pipelineValue = customers.reduce((sum, c) => sum + c.sales_value, 0);
 
   const headline = top
-    ? `${top.customer_name} anchors today's plan with RM${top.sales_value.toLocaleString()} of pipeline exposure.`
+    ? `${top.customer_name} anchors today's plan with RM${top.sales_value.toLocaleString("en-US")} of pipeline exposure.`
     : "Today's territory plan is ready for execution.";
-
   const summaryParts: string[] = [];
   if (kpis) {
     summaryParts.push(
@@ -112,12 +113,12 @@ function buildNarrativeBrief(
   }
   if (stale.length > 0) {
     summaryParts.push(
-      `${stale.length} account${stale.length === 1 ? "" : "s"} past the 30-day freshness window — renewal risk requires a touch this week.`,
+      `${stale.length} account${stale.length === 1 ? "" : "s"} past the 30-day freshness window â€” renewal risk requires a touch this week.`,
     );
   }
   if (leadCluster && leadCluster.count >= 2) {
     summaryParts.push(
-      `${leadCluster.name} cluster concentrates ${formatRinggit(leadCluster.totalValue)} of pipeline — sequence it before the westbound leg.`,
+      `${leadCluster.name} cluster concentrates ${formatRinggit(leadCluster.totalValue)} of pipeline â€” sequence it before the westbound leg.`,
     );
   }
 
@@ -125,7 +126,7 @@ function buildNarrativeBrief(
   if (top) {
     const territory = classifyTerritory(top.latitude, top.longitude);
     talkingPoints.push(
-      `Lead with ${top.customer_name} in ${territory} — ${top.tier} tier, composite score ${top.score.toFixed(1)}, ${formatRinggit(top.sales_value)}.`,
+      `Lead with ${top.customer_name} in ${territory} â€” ${top.tier} tier, composite score ${top.score.toFixed(1)}, ${formatRinggit(top.sales_value)}.`,
     );
   }
   if (highTier.length > 0) {
@@ -139,7 +140,7 @@ function buildNarrativeBrief(
       0,
     );
     talkingPoints.push(
-      `Route covers ${route.stops.length} stops, ${route.totalDistanceKm.toFixed(1)}km, ${route.totalDurationMinutes}min — routed revenue ${formatRinggit(routedRevenue)}.`,
+      `Route covers ${route.stops.length} stops, ${route.totalDistanceKm.toFixed(1)}km, ${route.totalDurationMinutes}min â€” routed revenue ${formatRinggit(routedRevenue)}.`,
     );
   }
   if (stale.length > 0) {
@@ -161,3 +162,4 @@ function buildNarrativeBrief(
     generatedAt: new Date().toISOString(),
   };
 }
+
