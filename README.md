@@ -6,16 +6,9 @@
 
 ---
 
-## The Problem
+## The Problem (from HILTI ASIA)
 
-B2B field sales reps in Malaysia burn hours every morning deciding who to visit, in what order, and why. The decision is usually made with a gut feel over a CRM spreadsheet:
-
-- **Which customer matters most today?** High-value accounts drift past renewal windows because nobody flags them.
-- **What's the optimal route?** Reps zigzag across KL, Petaling Jaya, and Shah Alam losing 30–60 minutes a day to bad sequencing.
-- **What's the rationale?** Managers want grounded reasoning, not "I felt like it."
-- **What's the revenue impact?** Pipeline visibility stops at CSV exports — no live projections, no opportunity scoring.
-
-Existing tools solve one piece (mapping, CRM, BI dashboards) but not the full decision loop. Reps end up with three tabs open and still no plan.
+Build an AI solution that helps salespeople decide which customers to visit and in what order within their assigned area, optimizing travel efficiency, location proximity and sales return.
 
 ## The Solution
 
